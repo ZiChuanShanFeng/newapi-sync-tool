@@ -1,5 +1,5 @@
 # NewAPI SYNC TOOL
-中文文档: [README.zh-CN.md](README.zh-CN.md)
+ [中文](README.zh-CN.md)
 
 [![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/G3451V)
 
