@@ -47,9 +47,9 @@ docker compose up -d
 5) Create a Zeabur template and copy the deploy button code into this README.
 
 Button link format (replace with your template):
-```
+
 [![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/G3451V)
-```
+
 
 ## PaaS notes
 This app needs a long-running Node process and writes config files on disk.
