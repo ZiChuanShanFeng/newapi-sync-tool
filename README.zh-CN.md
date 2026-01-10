@@ -43,10 +43,10 @@ docker compose up -d
 4) 添加持久化磁盘并挂载到 `/data`，然后设置 `CONFIG_DIR=/data`。
 5) 创建 Zeabur 模板，并把部署按钮代码放到 README。
 
-按钮链接格式（替换为你的模板）：
-```
+按钮链接格式：
+
 [![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/G3451V)
-```
+
 
 ## PaaS 说明
 此应用需要常驻进程并写入本地文件。
