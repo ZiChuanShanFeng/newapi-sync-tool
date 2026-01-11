@@ -22,6 +22,7 @@ export const state = {
   isLoading: false,
   isSyncing: false,
   theme: localStorage.getItem(STORAGE_KEYS.THEME) || 'light',
+  runtimeMode: 'node',
 
   // 搜索
   searchHistory: [],

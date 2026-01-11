@@ -15,7 +15,7 @@ import { notifications } from './ui/notifications.js';
 import { progress } from './ui/progress.js';
 
 // API 模块
-import { testConnection, loadConfig, saveConfig, getChannels, getChannelModels, syncModels, previewOneClickUpdate, executeOneClickUpdate } from './api.js';
+import { testConnection, loadConfig, saveConfig, getChannels, getChannelModels, syncModels, previewOneClickUpdate, executeOneClickUpdate, getStatus } from './api.js';
 
 // 特性模块
 import * as channelsModule from './features/channels/index.js';
@@ -48,6 +48,7 @@ class App {
   async init() {
     try {
       this.initElements();
+      await this.detectRuntimeMode();
       this.bindEvents();
       this.initModalScrollLock();
       this.loadSavedConfig();
@@ -69,6 +70,52 @@ class App {
   /**
    * 自动连接或跳转到设置页面
    */
+  isWorkerLiteMode() {
+    return state.runtimeMode === 'worker-lite';
+  }
+
+  async detectRuntimeMode() {
+    try {
+      const result = await getStatus();
+      const mode = result?.mode || result?.data?.mode;
+      if (!mode) return;
+      const normalized = String(mode).trim();
+      if (!normalized) return;
+      state.runtimeMode = normalized;
+      if (this.isWorkerLiteMode()) {
+        this.applyRuntimeMode();
+        notifications.info('Worker lite mode: checkpoints, one-click update, and monitor are disabled.');
+      }
+    } catch (error) {
+      console.warn('Runtime mode detection failed:', error);
+    }
+  }
+
+  applyRuntimeMode() {
+    if (!this.isWorkerLiteMode()) return;
+    const disabledTitle = 'Worker lite mode: feature not supported.';
+    const disableButton = (btn, title = disabledTitle) => {
+      if (!btn) return;
+      btn.disabled = true;
+      btn.title = title;
+      btn.setAttribute('aria-disabled', 'true');
+    };
+
+    disableButton(this.elements.quickOneClickUpdateBtn);
+    disableButton(this.elements.oneClickUpdateBtn);
+    disableButton(this.elements.rollbackSyncBtn);
+    disableButton(this.elements.rollbackOneClickBtn);
+
+    disableButton($('previewOneClickUpdateBtn'));
+    disableButton($('executeOneClickUpdateBtn'));
+    disableButton($('cancelOneClickUpdateBtn'));
+
+    const monitorCard = this.elements.monitorEnabled?.closest('.card');
+    if (monitorCard) {
+      monitorCard.style.display = 'none';
+    }
+  }
+
   async autoConnectOrRedirect() {
     const saved = localStorage.getItem(STORAGE_KEYS.CONFIG);
     if (saved) {
@@ -155,7 +202,6 @@ class App {
       saveMonitorSettingsBtn: $('saveMonitorSettingsBtn'),
       manualCheckBtn: $('manualCheckBtn'),
       testWebhookBtn: $('testWebhookBtn'),
-      testTelegramBtn: $('testTelegramBtn'),
       monitorStatusBadge: $('monitorStatusBadge'),
       monitorLastCheck: $('monitorLastCheck'),
 
@@ -313,7 +359,6 @@ class App {
     safeAddEventListener(this.elements.saveMonitorSettingsBtn, 'click', () => this.saveMonitorSettings());
     safeAddEventListener(this.elements.manualCheckBtn, 'click', () => this.runManualCheck());
     safeAddEventListener(this.elements.testWebhookBtn, 'click', () => this.testNotification('webhook'));
-    safeAddEventListener(this.elements.testTelegramBtn, 'click', () => this.testNotification('telegram'));
 
     // 键盘快捷键
     document.addEventListener('keydown', (e) => {
@@ -1275,6 +1320,10 @@ class App {
    * 加载监控设置
    */
   async loadMonitorSettings() {
+    if (this.isWorkerLiteMode()) {
+      return;
+    }
+
     try {
       const response = await fetch('/api/monitor/settings');
       const result = await response.json();
@@ -1341,6 +1390,11 @@ class App {
    * 保存监控设置
    */
   async saveMonitorSettings() {
+    if (this.isWorkerLiteMode()) {
+      notifications.warning('Worker lite mode: monitor is not supported.');
+      return;
+    }
+
     const settings = {
       enabled: this.elements.monitorEnabled?.checked || false,
       intervalHours: parseInt(this.elements.monitorIntervalHours?.value) || 6,
@@ -1381,6 +1435,11 @@ class App {
    * 手动触发检测
    */
   async runManualCheck() {
+    if (this.isWorkerLiteMode()) {
+      notifications.warning('Worker lite mode: monitor is not supported.');
+      return;
+    }
+
     const btn = this.elements.manualCheckBtn;
     if (btn) {
       btn.disabled = true;
@@ -1421,6 +1480,11 @@ class App {
    * 测试通知
    */
   async testNotification(type) {
+    if (this.isWorkerLiteMode()) {
+      notifications.warning('Worker lite mode: monitor is not supported.');
+      return;
+    }
+
     const btn = type === 'webhook' ? this.elements.testWebhookBtn : this.elements.testTelegramBtn;
     if (btn) {
       btn.disabled = true;
@@ -1437,7 +1501,8 @@ class App {
       if (result.success) {
         notifications.success(`${type === 'webhook' ? 'Webhook' : 'Telegram'} 测试通知已发送`);
       } else {
-        notifications.error(`发送失败: ${result.message}`);
+        const detail = result.error ? `${result.message}: ${result.error}` : result.message;
+        notifications.error(`发送失败: ${detail || '未知错误'}`);
       }
     } catch (error) {
       notifications.error(`发送失败: ${error.message}`);
