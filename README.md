@@ -5,7 +5,8 @@
 
 NewAPI Sync Tool (Node.js + Express).
 
-
+## TOKEN
+The access token can be obtained from Personal Settings - Security Settings - System Service Token.
 
 ## Requirements
 - Node.js 18+
