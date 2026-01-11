@@ -919,12 +919,18 @@ export const renderModelsList = (filter = '', readonly = false) => {
 
   const expandAll = normalizedFilter.length > 0;
   const grouped = groupModelsByType(filtered);
+  const currentChannelId = state.currentChannelId;
   list.innerHTML = grouped.map(group => {
     const storedCollapse = modelGroupCollapseState.get(group.key);
     const collapsed = expandAll ? false : (storedCollapse === undefined ? true : storedCollapse);
-    const selectedCount = group.models.reduce((total, model) => total + (setOps.hasModel(model) ? 1 : 0), 0);
+    const selectedCount = group.models.reduce((total, model) => {
+      const channelInfo = state.modelChannelMap[model];
+      const isSelectedForCurrentChannel = setOps.hasModel(model) && channelInfo && String(channelInfo.id) === String(currentChannelId);
+      return total + (isSelectedForCurrentChannel ? 1 : 0);
+    }, 0);
     const items = group.models.map(model => {
-      const isSelected = setOps.hasModel(model);
+      const channelInfo = state.modelChannelMap[model];
+      const isSelected = setOps.hasModel(model) && channelInfo && String(channelInfo.id) === String(currentChannelId);
       return `
         <label class="model-item ${isSelected ? 'selected' : ''}">
           ${!readonly ? `<input type="checkbox" ${isSelected ? 'checked' : ''} data-model="${model}">` : ''}
