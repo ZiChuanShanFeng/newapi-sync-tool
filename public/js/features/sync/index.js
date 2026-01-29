@@ -167,8 +167,8 @@ export const startSync = async (mode = 'append') => {
         entry = { channelId: mapping.channelId, mapping: {} };
         channelMappingsMap.set(mapping.channelId, entry);
       }
-      entry.mapping[originalModel] = targetModel;
-      console.log(`✅ [前端] 添加映射: ${originalModel} → ${targetModel} (渠道 ${mapping.channelId})`);
+      entry.mapping[targetModel] = originalModel;
+      console.log(`✅ [前端] 添加映射: ${targetModel} → ${originalModel} (渠道 ${mapping.channelId})`);
     }
 
     const channelMappings = Array.from(channelMappingsMap.values())
