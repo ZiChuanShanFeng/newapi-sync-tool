@@ -52,6 +52,8 @@ class App {
       this.bindEvents();
       this.initModalScrollLock();
       this.loadSavedConfig();
+      // 从服务端读取已保存的配置状态（令牌仅存于服务端，不回传浏览器）
+      await this.loadServerConfig();
       this.initTheme();
       this.bindFeatureModules();
       this.initRulesList();  // 初始化规则列表
@@ -63,7 +65,7 @@ class App {
       this.checkUpdate();
 
       // 自动连接或跳转到设置
-      this.autoConnectOrRedirect();
+      await this.autoConnectOrRedirect();
 
     } catch (error) {
       console.error('❌ 初始化失败:', error);
@@ -119,22 +121,61 @@ class App {
     }
   }
 
-  async autoConnectOrRedirect() {
-    const saved = localStorage.getItem(STORAGE_KEYS.CONFIG);
-    if (saved) {
-      try {
-        const config = JSON.parse(saved);
-        if (config.baseUrl && config.token) {
-          console.log('🔄 检测到已保存配置，自动连接...');
-          // 延迟执行，确保 DOM 完全加载
-          setTimeout(() => {
-            this.connectAndLoadChannels();
-          }, 100);
-          return;
+  /**
+   * 从服务端读取已保存配置（仅返回 baseUrl/userId 等非敏感信息，不含令牌）。
+   * 令牌由服务端加密保存并在请求时自动补全，浏览器无需持有。
+   */
+  async loadServerConfig() {
+    try {
+      const res = await loadConfig();
+      const cfg = res && res.config;
+      if (res && res.success && cfg && cfg.hasConfig) {
+        state.hasServerConfig = true;
+        if (this.elements.baseUrl && !this.elements.baseUrl.value && cfg.baseUrl) {
+          this.elements.baseUrl.value = cfg.baseUrl;
         }
-      } catch (e) {
-        console.warn('配置解析失败:', e);
+        if (this.elements.userId && (!this.elements.userId.value || this.elements.userId.value === '1') && cfg.userId) {
+          this.elements.userId.value = cfg.userId;
+        }
+        state.config = {
+          ...state.config,
+          baseUrl: this.elements.baseUrl?.value || cfg.baseUrl || state.config.baseUrl,
+          userId: this.elements.userId?.value || cfg.userId || state.config.userId
+        };
+        if (this.elements.token && !this.elements.token.value) {
+          this.elements.token.placeholder = '已保存（服务器加密存储，无需重复输入）';
+        }
       }
+    } catch (e) {
+      console.warn('加载服务端配置失败:', e);
+    }
+  }
+
+  async autoConnectOrRedirect() {
+    let canAutoConnect = state.hasServerConfig === true;
+
+    // 兼容旧版本：localStorage 中可能仍残留 baseUrl（不再依赖其中的令牌）
+    if (!canAutoConnect) {
+      const saved = localStorage.getItem(STORAGE_KEYS.CONFIG);
+      if (saved) {
+        try {
+          const config = JSON.parse(saved);
+          if (config.baseUrl && config.token) {
+            canAutoConnect = true;
+          }
+        } catch (e) {
+          console.warn('配置解析失败:', e);
+        }
+      }
+    }
+
+    if (canAutoConnect) {
+      console.log('🔄 检测到已保存配置，自动连接...');
+      // 延迟执行，确保 DOM 完全加载
+      setTimeout(() => {
+        this.connectAndLoadChannels();
+      }, 100);
+      return;
     }
 
     // 没有有效配置，跳转到设置页面
@@ -686,12 +727,17 @@ class App {
       const saved = localStorage.getItem(STORAGE_KEYS.CONFIG);
       if (saved) {
         const config = { ...DEFAULT_CONFIG, ...JSON.parse(saved) };
+        // 迁移：清除旧版本遗留在 localStorage 中的明文令牌
+        if (Object.prototype.hasOwnProperty.call(JSON.parse(saved), 'token')) {
+          const { token, ...localConfig } = config;
+          localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(localConfig));
+        }
         if (this.elements.baseUrl) this.elements.baseUrl.value = config.baseUrl || '';
-        if (this.elements.token) this.elements.token.value = config.token || '';
         if (this.elements.userId) this.elements.userId.value = config.userId || '1';
         if (this.elements.modelCacheRefreshMinutes) {
           this.elements.modelCacheRefreshMinutes.value = config.modelCacheRefreshMinutes || DEFAULT_CONFIG.modelCacheRefreshMinutes;
         }
+        // 令牌不再从浏览器恢复；保留旧 token 仅用于本次迁移期间的连续可用性
         state.config = config;
         this.applyModelCacheSettings(config);
       }
@@ -754,26 +800,39 @@ class App {
       cacheRefreshEl.value = config.modelCacheRefreshMinutes;
     }
 
-    if (!config.baseUrl || !config.token || !config.userId) {
+    const hasToken = !!config.token;
+
+    if (!config.baseUrl || !config.userId) {
       notifications.error('请填写完整的配置信息');
       return { success: false, message: '配置不完整' };
     }
+    // 服务端已保存令牌时允许留空（沿用已存令牌）；否则首次配置必须填写
+    if (!hasToken && !state.hasServerConfig) {
+      notifications.error('请填写访问令牌');
+      return { success: false, message: '缺少访问令牌' };
+    }
 
     try {
-      // 保存到本地存储
-      localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(config));
+      // 仅在浏览器本地保存非敏感字段，访问令牌绝不写入 localStorage
+      const { token, ...localConfig } = config;
+      localStorage.setItem(STORAGE_KEYS.CONFIG, JSON.stringify(localConfig));
 
-      // 保存到服务器
-      const result = await saveConfig(config);
-      if (result.success) {
-        state.config = config;
-        this.applyModelCacheSettings(config);
-        notifications.success('配置已保存');
-        return { success: true };
-      } else {
-        notifications.error(`保存失败: ${result.message}`);
-        return { success: false, message: result.message };
+      // 仅当用户输入了新令牌时才提交到服务器（服务端 AES 加密存储）
+      if (hasToken) {
+        const result = await saveConfig(config);
+        if (!result.success) {
+          notifications.error(`保存失败: ${result.message}`);
+          return { success: false, message: result.message };
+        }
+        state.hasServerConfig = true;
       }
+
+      state.config = config;
+      this.applyModelCacheSettings(config);
+      if (hasToken) {
+        notifications.success('配置已保存');
+      }
+      return { success: true };
     } catch (error) {
       notifications.error(`保存失败: ${error.message}`);
       return { success: false, message: error.message };

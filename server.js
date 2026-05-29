@@ -14,7 +14,9 @@ const CONFIG_DIR = process.env.CONFIG_DIR
   : __dirname;
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const MONITOR_CONFIG_FILE = path.join(CONFIG_DIR, 'monitor-config.json');
-const SECRET_KEY = process.env.SECRET_KEY || 'newapi-sync-tool-2024';
+const DEFAULT_SECRET_KEY = 'newapi-sync-tool-2024';
+const SECRET_KEY = process.env.SECRET_KEY || DEFAULT_SECRET_KEY;
+const USING_DEFAULT_SECRET = SECRET_KEY === DEFAULT_SECRET_KEY;
 
 // Startup timestamp
 const startTime = Date.now();
@@ -242,7 +244,26 @@ const updateChannelSnapshot = async (context, channelData) => {
 };
 
 // Middlewares
-app.use(cors());
+// CORS: restrict to an explicit allowlist when ALLOWED_ORIGINS is set
+// (comma-separated). Defaults to the previous permissive behaviour so existing
+// deployments are unaffected, but exposing the API publicly should set this.
+const allowedOrigins = String(process.env.ALLOWED_ORIGINS || '')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+app.use(cors(allowedOrigins.length > 0
+  ? {
+    origin: (origin, callback) => {
+      // Allow same-origin / non-browser requests (no Origin header)
+      if (!origin || allowedOrigins.includes(origin)) {
+        return callback(null, true);
+      }
+      return callback(new Error('Not allowed by CORS'));
+    }
+  }
+  : undefined));
+
 app.use(express.json({ charset: 'utf-8' }));
 app.use(express.urlencoded({ extended: true, charset: 'utf-8' }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -256,6 +277,55 @@ app.use((req, res, next) => {
 // Simple request logger
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.path}`);
+  next();
+});
+
+// Read and decrypt the persisted config (returns null when absent/invalid).
+const getStoredConfig = async () => {
+  try {
+    const configData = await fs.readFile(CONFIG_FILE, 'utf8');
+    const encrypted = JSON.parse(configData);
+    return NewAPIClient.decryptConfig(encrypted, SECRET_KEY);
+  } catch (error) {
+    return null;
+  }
+};
+
+// Credential fallback: the access token is only ever persisted server-side
+// (AES-encrypted in config.json). The browser sends requests without a token,
+// and we fill it in from the stored config here. The stored token is injected
+// only when the request targets the same baseUrl it was saved for, so it can
+// never be leaked to a different server supplied by the client.
+app.use(async (req, res, next) => {
+  if (req.method === 'GET') return next();
+  if (!req.path.startsWith('/api/')) return next();
+  // /api/config saves credentials (needs the real token in the body) and
+  // /api/monitor/* uses its own stored config — skip both.
+  if (req.path === '/api/config' || req.path.startsWith('/api/monitor')) return next();
+
+  const src = req.body;
+  if (!src || typeof src !== 'object') return next();
+
+  const hasToken = src.token != null && String(src.token).trim() !== '';
+  if (hasToken) return next();
+
+  try {
+    const stored = await getStoredConfig();
+    if (!stored || !stored.token) return next();
+
+    // Only inject the stored token for its own server.
+    if (src.baseUrl && normalizeBaseUrl(src.baseUrl) !== normalizeBaseUrl(stored.baseUrl)) {
+      return next();
+    }
+
+    if (!src.baseUrl) src.baseUrl = stored.baseUrl;
+    if (!src.userId) src.userId = stored.userId;
+    if (src.authHeaderType == null && stored.authHeaderType) src.authHeaderType = stored.authHeaderType;
+    src.token = stored.token;
+  } catch (error) {
+    // Fall through with whatever the client supplied.
+  }
+
   next();
 });
 
@@ -284,11 +354,21 @@ app.get('/api/status', async (req, res) => {
 // Channel list endpoint (GET for frontend compatibility)
 app.get('/api/channel/', async (req, res) => {
   try {
-    const { baseUrl, token, userId, authHeaderType } = req.query;
+    let { baseUrl, token, userId, authHeaderType } = req.query;
+    // Fall back to the stored, server-side encrypted token when absent.
+    if (!token) {
+      const stored = await getStoredConfig();
+      if (stored && stored.token && (!baseUrl || normalizeBaseUrl(baseUrl) === normalizeBaseUrl(stored.baseUrl))) {
+        baseUrl = baseUrl || stored.baseUrl;
+        userId = userId || stored.userId;
+        authHeaderType = authHeaderType || stored.authHeaderType;
+        token = stored.token;
+      }
+    }
     if (!baseUrl || !token || !userId) {
       return res.status(400).json({ success: false, message: '请填写完整的配置信息' });
     }
-    
+
     const client = new NewAPIClient({ baseUrl, token, userId, authHeaderType });
     const requestedPageSize = req.query.pageSize || req.query.page_size;
     const result = await fetchAllChannels(client, requestedPageSize || 1000);
@@ -1315,6 +1395,14 @@ app.listen(PORT, async () => {
   console.log(`配置文件: ${CONFIG_FILE}`);
   console.log(`启动时间: ${new Date().toISOString()}`);
   console.log('按 CTRL+C 停止服务');
+
+  if (USING_DEFAULT_SECRET) {
+    console.warn('⚠️  [安全警告] 正在使用默认 SECRET_KEY，config.json 的加密形同虚设。');
+    console.warn('⚠️  请通过环境变量设置一个强随机 SECRET_KEY 后重启，例如: SECRET_KEY=$(openssl rand -hex 32)');
+  }
+  if (allowedOrigins.length === 0) {
+    console.warn('⚠️  [安全提示] 未设置 ALLOWED_ORIGINS，CORS 允许所有来源。公网部署时请设置 ALLOWED_ORIGINS 并置于带鉴权的反向代理之后。');
+  }
 
   // 尝试加载并启动定时监控
   try {

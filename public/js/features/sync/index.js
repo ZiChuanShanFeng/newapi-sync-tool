@@ -42,7 +42,8 @@ export const startSync = async (mode = 'append') => {
     return { success: false, message: '同步正在进行中' };
   }
 
-  if (!state.config.baseUrl || !state.config.token || !state.config.userId) {
+  // 令牌可由服务端加密存储并自动补全，浏览器侧不强制持有
+  if (!state.config.baseUrl || !state.config.userId || (!state.config.token && !state.hasServerConfig)) {
     notifications.error('请先配置连接信息');
     return { success: false, message: '请先配置连接信息' };
   }

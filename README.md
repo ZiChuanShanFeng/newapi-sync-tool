@@ -25,6 +25,12 @@ Open `http://localhost:8083`.
 - `PORT`: server port (default `8083`)
 - `SECRET_KEY`: encryption key for `config.json` (default `newapi-sync-tool-2024`)
 - `CONFIG_DIR`: directory for `config.json` and `monitor-config.json` (default project root)
+- `ALLOWED_ORIGINS`: comma-separated CORS allowlist (e.g. `https://app.example.com`). When unset, all origins are allowed.
+
+## Security notes
+- The access token is **never** stored in the browser. It is sent to the server once, encrypted with `SECRET_KEY`, and stored in `config.json`. Subsequent requests omit the token and the server fills it in automatically (only for the matching server URL), so you enter it once.
+- **Set a strong random `SECRET_KEY`** (e.g. `SECRET_KEY=$(openssl rand -hex 32)`). With the default key, anyone who reads `config.json` can decrypt the token. The server prints a warning at startup when the default key is in use.
+- This tool has no built-in authentication. When exposing it publicly, place it behind an authenticated reverse proxy and set `ALLOWED_ORIGINS`.
 
 ## Docker
 ```bash

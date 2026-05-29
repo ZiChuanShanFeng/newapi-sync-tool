@@ -8,6 +8,8 @@ import { DEFAULT_CONFIG, CACHE_CONFIG, STORAGE_KEYS } from './constants.js';
 export const state = {
   // 配置
   config: { ...DEFAULT_CONFIG },
+  // 服务端是否已保存配置（令牌仅存于服务端，浏览器不持有）
+  hasServerConfig: false,
 
   // 数据
   channels: [],
